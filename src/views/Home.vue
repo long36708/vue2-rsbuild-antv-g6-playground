@@ -25,6 +25,15 @@ export default {
           <small>使用 antv/g6 可视化多父节点标签树，验证添加边时的环检测逻辑</small>
         </p>
       </div>
+      <div class="jump-section">
+        <h4>性能测试 - 植物分类树（万级节点渲染压测）</h4>
+        <el-button type="primary" @click="$router.push('/prototype/tree-performance')">
+          打开性能测试页
+        </el-button>
+        <p class="tip-text">
+          <small>以植物分类学为示例，测试 1w 树节点的数据生成与渲染性能</small>
+        </p>
+      </div>
     </div>
   </div>
 </template>

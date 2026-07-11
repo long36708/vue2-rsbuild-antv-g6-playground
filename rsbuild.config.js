@@ -18,4 +18,11 @@ export default defineConfig({
       index: './src/index.js',
     },
   },
+  server: {
+    // WASM 多线程需要 SharedArrayBuffer，需启用 COOP/COEP 实现跨域隔离
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
 });
