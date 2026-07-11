@@ -8,12 +8,14 @@ export default defineConfig({
   html: {
     template: './public/index.html',
   },
-  source: {
-    entry: {
-      index: './src/main.js',
-    },
+  resolve:{
     alias: {
       '@': './src/',
+    },
+  },
+  source: {
+    entry: {
+      index: './src/index.js',
     },
   },
 });
