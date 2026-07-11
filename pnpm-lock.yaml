@@ -14,6 +14,9 @@ importers:
       element-ui:
         specifier: ^2.15.14
         version: 2.15.14(vue@2.7.16)
+      v-contextmenu:
+        specifier: ^2.9.2
+        version: 2.9.2(vue@2.7.16)
       vue:
         specifier: 2.7.16
         version: 2.7.16
@@ -57,6 +60,9 @@ importers:
       lefthook:
         specifier: ^2.0.16
         version: 2.0.16
+      vue-runtime-helpers:
+        specifier: ^1.1.2
+        version: 1.1.2
 
 packages:
 
@@ -3037,6 +3043,12 @@ packages:
   utrie@1.0.2:
     resolution: {integrity: sha512-1MLa5ouZiOmQzUbjbu9VmjLzn1QLXBhwpUa7kdLUQK+KQ5KA9I1vk5U4YHe/X2Ch7PYnJfWuWT+VbuxbGwljhw==}
 
+  v-contextmenu@2.9.2:
+    resolution: {integrity: sha512-zCp1IG9UIJ1PQlccZ73RH68svvFUydXfndJlWDv9WvBlwbtWfIy5jUFpwBjwWXhqe7TvVi50xP99foeL3YJtOg==}
+    engines: {node: '>= 4.0.0', npm: '>= 3.0.0'}
+    peerDependencies:
+      vue: ^2.5.0
+
   vue-eslint-parser@10.2.0:
     resolution: {integrity: sha512-CydUvFOQKD928UzZhTp4pr2vWz1L+H99t7Pkln2QSPdvmURT0MoC4wUccfCnuEaihNsu9aYYyk+bep8rlfkUXw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -3069,6 +3081,9 @@ packages:
     resolution: {integrity: sha512-VYXZQLtjuvKxxcshuRAwjHnciqZVoXAjTjcqBTz4rKc8qih9g9pI3hbDjmqXaHdgL3v8pV6P8Z335XvHzESxLQ==}
     peerDependencies:
       vue: ^2
+
+  vue-runtime-helpers@1.1.2:
+    resolution: {integrity: sha512-pZfGp+PW/IXEOyETE09xQHR1CKkR9HfHZdnMD/FVLUNI+HxYTa82evx5WrF6Kz4s82qtqHvMZ8MZpbk2zT2E1Q==}
 
   vue-style-loader@4.1.3:
     resolution: {integrity: sha512-sFuh0xfbtpRlKfm39ss/ikqs9AbKCoXZBpHeVZ8Tx650o0k0q/YCM7FRvigtxpACezfq6af+a7JeqVTWvncqDg==}
@@ -6485,6 +6500,10 @@ snapshots:
     dependencies:
       base64-arraybuffer: 1.0.2
 
+  v-contextmenu@2.9.2(vue@2.7.16):
+    dependencies:
+      vue: 2.7.16
+
   vue-eslint-parser@10.2.0(eslint@9.39.2(jiti@2.6.1)):
     dependencies:
       debug: 4.4.3
@@ -6569,6 +6588,8 @@ snapshots:
   vue-router@3.6.5(vue@2.7.16):
     dependencies:
       vue: 2.7.16
+
+  vue-runtime-helpers@1.1.2: {}
 
   vue-style-loader@4.1.3:
     dependencies:

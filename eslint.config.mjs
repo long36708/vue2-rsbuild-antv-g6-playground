@@ -15,6 +15,9 @@ export default [
     },
     ...(await antfu({
         vue: {
+            vueVersion: 2,
+            // 设置成false就不会报错
+            sfcBlocks: false,
             overrides: {
                 'vue/html-self-closing': 'off',
             },
