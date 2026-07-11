@@ -14,6 +14,7 @@
     "prepare": "lefthook install"
   },
   "dependencies": {
+    "@antv/g-webgl": "^2.1.1",
     "@antv/g6": "^5.1.1",
     "@antv/layout-gpu": "^1.1.7",
     "@antv/layout-wasm": "^1.4.2",

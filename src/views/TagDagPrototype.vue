@@ -1,4 +1,5 @@
 <script>
+import { Renderer as WebGLRenderer } from '@antv/g-webgl'
 import { Graph } from '@antv/g6'
 import {
   addEdge,
@@ -24,7 +25,6 @@ export default {
   name: 'TagDagPrototype',
   data() {
     return {
-      dag: createSampleDag(),
       graph: null,
       selectedNodeId: null,
       // 表单
@@ -47,47 +47,59 @@ export default {
       searchResults: [],
       // 反馈
       lastAction: null,
+      // 加载状态
+      graphLoading: false,
+      // ---- 非响应式数据（避免 Vue 2 深度劫持万级节点）----
+      _dag: null,
+      _nodeVersion: 0,
+      _searchTimer: null,
     }
   },
   computed: {
+    dag() {
+      return this._dag
+    },
     maxLevel() {
       return MAX_LEVEL
     },
     nodeOptions() {
-      return [...this.dag.nodes.values()]
+      // 依赖 _nodeVersion 手动触发更新
+      this._nodeVersion // eslint-disable-line
+      return [...this._dag.nodes.values()]
     },
     summary() {
-      return getStateSummary(this.dag)
+      this._nodeVersion // eslint-disable-line
+      return getStateSummary(this._dag)
     },
     selectedNode() {
       if (!this.selectedNodeId)
         return null
-      return this.dag.nodes.get(this.selectedNodeId) || null
+      return this._dag.nodes.get(this.selectedNodeId) || null
     },
     selectedLevel() {
       if (!this.selectedNodeId)
         return 0
-      return getNodeLevel(this.dag, this.selectedNodeId)
+      return getNodeLevel(this._dag, this.selectedNodeId)
     },
     selectedParents() {
       if (!this.selectedNodeId)
         return []
-      return getParents(this.dag, this.selectedNodeId).map(id => `${this.dag.nodes.get(id)?.label || id}（${id}）`)
+      return getParents(this._dag, this.selectedNodeId).map(id => `${this._dag.nodes.get(id)?.label || id}（${id}）`)
     },
     selectedChildren() {
       if (!this.selectedNodeId)
         return []
-      return getChildren(this.dag, this.selectedNodeId).map(id => `${this.dag.nodes.get(id)?.label || id}（${id}）`)
+      return getChildren(this._dag, this.selectedNodeId).map(id => `${this._dag.nodes.get(id)?.label || id}（${id}）`)
     },
     selectedAncestors() {
       if (!this.selectedNodeId)
         return []
-      return getAncestors(this.dag, this.selectedNodeId).map(id => `${this.dag.nodes.get(id)?.label || id}（${id}）`)
+      return getAncestors(this._dag, this.selectedNodeId).map(id => `${this._dag.nodes.get(id)?.label || id}（${id}）`)
     },
     selectedDescendants() {
       if (!this.selectedNodeId)
         return []
-      return getDescendants(this.dag, this.selectedNodeId).map(id => `${this.dag.nodes.get(id)?.label || id}（${id}）`)
+      return getDescendants(this._dag, this.selectedNodeId).map(id => `${this._dag.nodes.get(id)?.label || id}（${id}）`)
     },
     edgePreview() {
       if (!this.edgeSource || !this.edgeTarget)
@@ -95,15 +107,15 @@ export default {
       if (this.edgeSource === this.edgeTarget) {
         return { wouldCycle: true, safe: false, info: false, message: '⚠ 自环：不能添加' }
       }
-      const exists = this.dag.edges.some(e => e.source === this.edgeSource && e.target === this.edgeTarget)
+      const exists = this._dag.childrenMap.get(this.edgeSource)?.has(this.edgeTarget)
       if (exists) {
         return { wouldCycle: false, safe: false, info: true, message: '边已存在' }
       }
-      const wouldCycle = wouldCreateCycle(this.dag, this.edgeSource, this.edgeTarget)
+      const wouldCycle = wouldCreateCycle(this._dag, this.edgeSource, this.edgeTarget)
       if (wouldCycle) {
         return { wouldCycle: true, safe: false, info: false, message: '⚠ 会形成环，禁止添加' }
       }
-      const wouldExceed = wouldExceedMaxLevel(this.dag, this.edgeSource, this.edgeTarget)
+      const wouldExceed = wouldExceedMaxLevel(this._dag, this.edgeSource, this.edgeTarget)
       if (wouldExceed) {
         return { wouldCycle: false, safe: false, info: false, message: `⚠ 会超过最大层级限制（${MAX_LEVEL} 级），禁止添加` }
       }
@@ -119,12 +131,17 @@ export default {
       return ''
     },
   },
+  created() {
+    // 在 created 中初始化 dag，不经过 Vue 2 的响应式系统
+    this._dag = createSampleDag()
+  },
   mounted() {
     this.$nextTick(() => {
       this.initGraph()
     })
   },
   beforeDestroy() {
+    clearTimeout(this._searchTimer)
     if (this.graph) {
       this.graph.destroy()
       this.graph = null
@@ -136,22 +153,31 @@ export default {
       if (!container)
         return
 
+      this.graphLoading = true
+      const g6Data = toG6Data(this._dag)
+
       this.graph = new Graph({
         container,
         width: container.offsetWidth || 800,
         height: container.offsetHeight || 600,
         autoFit: 'view',
-        data: toG6Data(this.dag),
+        data: g6Data,
+        // 全部图层使用 WebGL 渲染，提升万级节点渲染性能
+        renderer: () => new WebGLRenderer(),
         node: {
           style: {
-            size: 36,
+            size: 24,
             fill: '#C6E5FF',
             stroke: '#5B8FF9',
-            lineWidth: 2,
+            lineWidth: 1,
             labelText: d => d.data?.label || d.id,
             labelPlacement: 'bottom',
-            labelFontSize: 13,
+            labelFontSize: 10,
             labelFill: '#333',
+            labelMaxWidth: 60,
+            labelWordWrap: true,
+            labelMaxLines: 1,
+            labelOverflow: 'hide',
           },
           state: {
             selected: {
@@ -164,22 +190,33 @@ export default {
               stroke: '#7CB305',
               lineWidth: 3,
             },
+            inactive: {
+              fill: '#f5f5f5',
+              stroke: '#d9d9d9',
+              lineWidth: 1,
+              labelFill: '#bbb',
+            },
           },
         },
         edge: {
           style: {
             endArrow: true,
-            stroke: '#bfbfbf',
-            lineWidth: 1.5,
+            stroke: '#e0e0e0',
+            lineWidth: 1,
           },
         },
         layout: {
           type: 'dagre',
           rankdir: 'TB',
-          nodesep: 40,
-          ranksep: 60,
+          nodesep: 30,
+          ranksep: 50,
         },
-        behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element'],
+        behaviors: [
+          { type: 'drag-canvas', enableOptimize: true },
+          { type: 'zoom-canvas', enableOptimize: true },
+          'drag-element',
+        ],
+        animation: false,
       })
 
       this.graph.on('node:click', (evt) => {
@@ -194,7 +231,6 @@ export default {
       })
 
       this.graph.on('canvas:contextmenu', () => {
-        // 在空白处右键：清空作用节点，避免菜单操作到旧节点
         this.contextMenuNodeId = null
       })
 
@@ -207,7 +243,12 @@ export default {
         this.contextMenuNodeId = null
       })
 
-      this.graph.render()
+      // 使用 requestAnimationFrame 让 loading 状态先渲染出来，再执行 render
+      requestAnimationFrame(() => {
+        this.graph.render().then(() => {
+          this.graphLoading = false
+        })
+      })
     },
     // ---- 右键菜单（v-contextmenu）----
     menuAddChild() {
@@ -232,7 +273,7 @@ export default {
       const nodeId = this.contextMenuNodeId
       if (!nodeId)
         return
-      const node = this.dag.nodes.get(nodeId)
+      const node = this._dag.nodes.get(nodeId)
       this.dialogType = 'edit'
       this.dialogNodeId = nodeId
       this.dialogForm = { id: node.id, label: node.label, parentId: '' }
@@ -242,7 +283,7 @@ export default {
       const id = this.contextMenuNodeId
       if (!id)
         return
-      const result = removeNode(this.dag, id)
+      const result = removeNode(this._dag, id)
       this.lastAction = { ok: result.ok, message: result.ok ? `节点「${id}」删除成功` : result.error }
       if (result.ok) {
         if (this.selectedNodeId === id)
@@ -261,12 +302,12 @@ export default {
           this.lastAction = { ok: false, message: '请输入节点 ID' }
           return
         }
-        const r = addNode(this.dag, id, label)
+        const r = addNode(this._dag, id, label)
         if (!r.ok) {
           this.lastAction = { ok: false, message: r.error }
           return
         }
-        const e = addEdge(this.dag, nodeId, id) // 当前节点作为父
+        const e = addEdge(this._dag, nodeId, id) // 当前节点作为父
         this.lastAction = { ok: true, message: e.ok ? `已添加子节点「${id}」并关联` : `节点「${id}」已添加，但关联失败：${e.error}` }
         this.refreshGraph()
       }
@@ -275,13 +316,13 @@ export default {
           this.lastAction = { ok: false, message: '请选择父节点' }
           return
         }
-        const e = addEdge(this.dag, form.parentId, nodeId) // 选中的作为父
+        const e = addEdge(this._dag, form.parentId, nodeId) // 选中的作为父
         this.lastAction = { ok: e.ok, message: e.ok ? `已为「${nodeId}」添加父节点「${form.parentId}」` : e.error }
         if (e.ok)
           this.refreshGraph()
       }
       else if (type === 'edit') {
-        const r = updateNodeLabel(this.dag, nodeId, form.label)
+        const r = updateNodeLabel(this._dag, nodeId, form.label)
         this.lastAction = { ok: r.ok, message: r.ok ? `节点「${nodeId}」名称已更新为「${form.label}」` : r.error }
         if (r.ok)
           this.refreshGraph()
@@ -295,37 +336,50 @@ export default {
     async refreshGraph() {
       if (!this.graph)
         return
-      this.graph.setData(toG6Data(this.dag))
+      this._nodeVersion++
+      this.graph.setData(toG6Data(this._dag))
       await this.graph.render()
-      if (this.selectedNodeId && !this.dag.nodes.has(this.selectedNodeId)) {
+      if (this.selectedNodeId && !this._dag.nodes.has(this.selectedNodeId)) {
         this.selectedNodeId = null
       }
       this.applyHighlights()
     },
-    /** 统一应用搜索高亮和选中状态 */
+    /** 统一应用搜索高亮和选中状态（批量设置，G6 v5 格式为 { [id]: state[] }） */
     applyHighlights() {
       if (!this.graph)
         return
       const searchIds = new Set(this.searchResults.map(n => n.id))
-      this.dag.nodes.forEach((_, id) => {
+      const hasFilter = searchIds.size > 0 || this.selectedNodeId
+
+      const batchStates = {}
+      this._dag.nodes.forEach((_, id) => {
         if (searchIds.has(id)) {
-          this.graph.setElementState(id, ['searched'])
+          batchStates[id] = ['searched']
         }
         else if (this.selectedNodeId === id) {
-          this.graph.setElementState(id, ['selected'])
+          batchStates[id] = ['selected']
+        }
+        else if (hasFilter) {
+          batchStates[id] = ['inactive']
         }
         else {
-          this.graph.setElementState(id, [])
+          batchStates[id] = []
         }
       })
+
+      this.graph.setElementState(batchStates)
     },
     handleSearch() {
       if (!this.searchKeyword.trim()) {
         this.clearSearch()
         return
       }
-      this.searchResults = searchNodes(this.dag, this.searchKeyword)
-      this.applyHighlights()
+      // debounce 200ms，避免万级节点下每次输入都触发全量扫描
+      clearTimeout(this._searchTimer)
+      this._searchTimer = setTimeout(() => {
+        this.searchResults = searchNodes(this._dag, this.searchKeyword)
+        this.applyHighlights()
+      }, 200)
     },
     clearSearch() {
       this.searchResults = []
@@ -344,7 +398,7 @@ export default {
         this.lastAction = { ok: false, message: '请输入节点 ID' }
         return
       }
-      const result = addNode(this.dag, id, label)
+      const result = addNode(this._dag, id, label)
       if (!result.ok) {
         this.lastAction = { ok: false, message: result.error }
         return
@@ -352,7 +406,7 @@ export default {
       // 与已存在节点建立关联（支持多父节点）
       const failed = []
       for (const parentId of this.newNodeParents) {
-        const edgeResult = addEdge(this.dag, parentId, id)
+        const edgeResult = addEdge(this._dag, parentId, id)
         if (!edgeResult.ok)
           failed.push(edgeResult.error)
       }
@@ -373,7 +427,7 @@ export default {
         this.lastAction = { ok: false, message: '请选择源节点和目标节点' }
         return
       }
-      const result = addEdge(this.dag, this.edgeSource, this.edgeTarget)
+      const result = addEdge(this._dag, this.edgeSource, this.edgeTarget)
       this.lastAction = {
         ok: result.ok,
         message: result.ok ? `边「${this.edgeSource} → ${this.edgeTarget}」添加成功` : result.error,
@@ -389,7 +443,7 @@ export default {
         this.lastAction = { ok: false, message: '请选择要删除的节点' }
         return
       }
-      const result = removeNode(this.dag, this.removeNodeId)
+      const result = removeNode(this._dag, this.removeNodeId)
       this.lastAction = { ok: result.ok, message: result.ok ? `节点「${this.removeNodeId}」删除成功` : result.error }
       if (result.ok) {
         if (this.selectedNodeId === this.removeNodeId) {
@@ -404,12 +458,12 @@ export default {
         this.lastAction = { ok: false, message: '请选择要删除的边' }
         return
       }
-      const edge = this.dag.edges[this.removeEdgeIndex]
+      const edge = this._dag.edges[this.removeEdgeIndex]
       if (!edge) {
         this.lastAction = { ok: false, message: '边不存在' }
         return
       }
-      const result = removeEdge(this.dag, edge.source, edge.target)
+      const result = removeEdge(this._dag, edge.source, edge.target)
       this.lastAction = {
         ok: result.ok,
         message: result.ok ? `边「${edge.source} → ${edge.target}」删除成功` : result.error,
@@ -436,6 +490,10 @@ export default {
     <div class="prototype-body">
       <!-- 左侧：g6 图画布 -->
       <div class="graph-area">
+        <div v-if="graphLoading" class="graph-loading">
+          <div class="loading-spinner"></div>
+          <span>布局计算中，请稍候…</span>
+        </div>
         <div ref="graphContainer" v-contextmenu:ctxmenu class="graph-container"></div>
       </div>
 
@@ -683,6 +741,33 @@ export default {
 .graph-container {
   width: 100%;
   height: 100%;
+}
+
+.graph-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  z-index: 10;
+  font-size: 14px;
+  color: #666;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e8e8e8;
+  border-top-color: #5B8FF9;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .control-panel {

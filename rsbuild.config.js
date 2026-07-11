@@ -19,7 +19,9 @@ export default defineConfig({
     },
   },
   server: {
-    // WASM 多线程需要 SharedArrayBuffer，需启用 COOP/COEP 实现跨域隔离
+    // 显式使用 localhost，确保浏览器视为可信 origin，COOP/COEP 头才能生效
+    // （SharedArrayBuffer / WASM 多线程依赖跨域隔离）
+    host: 'localhost',
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',

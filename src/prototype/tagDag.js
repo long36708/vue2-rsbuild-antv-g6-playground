@@ -19,6 +19,8 @@ export function createTagDag() {
   return {
     nodes: new Map(), // id -> { id, label }
     edges: [], // [{ source, target }]
+    childrenMap: new Map(), // id -> Set<id>  出边邻接表
+    parentMap: new Map(), // id -> Set<id>  入边邻接表
   }
 }
 
@@ -28,6 +30,10 @@ export function addNode(dag, id, label) {
     return { ok: false, error: `节点「${id}」已存在` }
   }
   dag.nodes.set(id, { id, label: label || id })
+  if (!dag.childrenMap.has(id))
+    dag.childrenMap.set(id, new Set())
+  if (!dag.parentMap.has(id))
+    dag.parentMap.set(id, new Set())
   return { ok: true }
 }
 
@@ -47,19 +53,30 @@ export function removeNode(dag, id) {
   if (!dag.nodes.has(id)) {
     return { ok: false, error: `节点「${id}」不存在` }
   }
+  // 通过邻接表 O(k) 清理关联边，k 为该节点的度
+  const parents = dag.parentMap.get(id) || new Set()
+  const children = dag.childrenMap.get(id) || new Set()
+  for (const pid of parents) {
+    dag.childrenMap.get(pid)?.delete(id)
+  }
+  for (const cid of children) {
+    dag.parentMap.get(cid)?.delete(id)
+  }
   dag.nodes.delete(id)
+  dag.childrenMap.delete(id)
+  dag.parentMap.delete(id)
   dag.edges = dag.edges.filter(e => e.source !== id && e.target !== id)
   return { ok: true }
 }
 
-/** 获取直接子节点（出边方向） */
+/** 获取直接子节点（出边方向，O(1) 邻接表查询） */
 export function getChildren(dag, id) {
-  return dag.edges.filter(e => e.source === id).map(e => e.target)
+  return [...(dag.childrenMap.get(id) || new Set())]
 }
 
-/** 获取直接父节点（入边方向） */
+/** 获取直接父节点（入边方向，O(1) 邻接表查询） */
 export function getParents(dag, id) {
-  return dag.edges.filter(e => e.target === id).map(e => e.source)
+  return [...(dag.parentMap.get(id) || new Set())]
 }
 
 /**
@@ -101,10 +118,9 @@ export function addEdge(dag, sourceId, targetId) {
   if (sourceId === targetId) {
     return { ok: false, error: '不能添加自环边' }
   }
-  const exists = dag.edges.some(
-    e => e.source === sourceId && e.target === targetId,
-  )
-  if (exists) {
+  // O(1) 邻接表判重，替代 O(E) 的 edges.some
+  const childSet = dag.childrenMap.get(sourceId)
+  if (childSet && childSet.has(targetId)) {
     return { ok: false, error: `边「${sourceId} → ${targetId}」已存在` }
   }
   if (wouldCreateCycle(dag, sourceId, targetId)) {
@@ -121,6 +137,8 @@ export function addEdge(dag, sourceId, targetId) {
   }
 
   dag.edges.push({ source: sourceId, target: targetId })
+  dag.childrenMap.get(sourceId).add(targetId)
+  dag.parentMap.get(targetId).add(sourceId)
   return { ok: true }
 }
 
@@ -133,6 +151,8 @@ export function removeEdge(dag, sourceId, targetId) {
   if (dag.edges.length === before) {
     return { ok: false, error: `边「${sourceId} → ${targetId}」不存在` }
   }
+  dag.childrenMap.get(sourceId)?.delete(targetId)
+  dag.parentMap.get(targetId)?.delete(sourceId)
   return { ok: true }
 }
 
@@ -216,18 +236,22 @@ export function wouldExceedMaxLevel(dag, sourceId, targetId) {
 /**
  * 搜索节点（按 id 或 label 模糊匹配，不区分大小写）。
  * 返回匹配节点数组，每项附带层级信息。
+ * limit 参数防止万级节点下返回过多结果。
  */
-export function searchNodes(dag, keyword) {
+export function searchNodes(dag, keyword, limit = 50) {
   const kw = keyword.trim().toLowerCase()
   if (!kw)
     return []
   const results = []
+  const memo = new Map()
   for (const node of dag.nodes.values()) {
+    if (results.length >= limit)
+      break
     if (
       node.id.toLowerCase().includes(kw)
       || node.label.toLowerCase().includes(kw)
     ) {
-      results.push({ ...node, level: getNodeLevel(dag, node.id) })
+      results.push({ ...node, level: getNodeLevel(dag, node.id, memo) })
     }
   }
   return results
@@ -248,13 +272,14 @@ export function toG6Data(dag) {
   }
 }
 
-/** 获取状态摘要（用于展示） */
+/** 获取状态摘要（轻量版，不生成全量字符串数组） */
 export function getStateSummary(dag) {
   return {
     nodeCount: dag.nodes.size,
     edgeCount: dag.edges.length,
-    nodes: [...dag.nodes.values()].map(n => `${n.id}（${n.label}）`),
-    edges: dag.edges.map(e => `${e.source} → ${e.target}`),
+    edges: dag.edges.slice(0, 200).map(e =>
+      `${dag.nodes.get(e.source)?.label || e.source} → ${dag.nodes.get(e.target)?.label || e.target}`,
+    ),
   }
 }
 

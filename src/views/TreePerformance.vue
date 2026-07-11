@@ -1,4 +1,5 @@
 <script>
+import { Renderer as WebGLRenderer } from '@antv/g-webgl'
 import { Graph } from '@antv/g6'
 import { createPlantTree, createPlantDag, getLevelColor, PLANT_LEVEL_NAMES } from '@/prototype/plantTree'
 import {
@@ -158,6 +159,8 @@ export default {
         height: container.offsetHeight || 600,
         autoFit: 'view',
         data: { nodes: [], edges: [] },
+        // WebGL 渲染器，GPU 加速万级节点绘制
+        renderer: () => new WebGLRenderer(),
         node: {
           style: {
             size: nodeSize,
