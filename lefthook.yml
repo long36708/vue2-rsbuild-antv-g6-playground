@@ -1,0 +1,13 @@
+pre-commit:
+  parallel: true
+  commands:
+    eslint:
+      glob: "*.{js,jsx,vue}"
+      run: pnpm exec eslint {staged_files}
+      fail_text: "ESLint 检查失败，请修复错误后再提交"
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}
+      fail_text: "提交信息不符合规范，请参考 Conventional Commits 规范"

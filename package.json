@@ -1,0 +1,35 @@
+{
+  "name": "vue2-rsbuild-template",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rsbuild build",
+    "dev": "rsbuild dev --open",
+    "preview": "rsbuild preview",
+    "test": "rstest",
+    "test:watch": "rstest --watch",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "prepare": "lefthook install"
+  },
+  "dependencies": {
+    "element-ui": "^2.15.14",
+    "vue": "2.7.16",
+    "vue-router": "3.6.5",
+    "vue-template-compiler": "2.7.16"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^7.2.0",
+    "@commitlint/cli": "^20.3.1",
+    "@commitlint/config-conventional": "^20.3.1",
+    "@rsbuild/core": "^1.7.2",
+    "@rsbuild/plugin-vue2": "^1.0.4",
+    "@rstest/core": "^0.8.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/vue": "^5.9.0",
+    "eslint-plugin-oxlint": "^1.42.0",
+    "lefthook": "^2.0.16"
+  }
+}
