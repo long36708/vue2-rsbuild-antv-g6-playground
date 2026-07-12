@@ -34,6 +34,24 @@ export default {
           <small>以植物分类学为示例，测试 1w 树节点的数据生成与渲染性能</small>
         </p>
       </div>
+      <div class="jump-section">
+        <h4>原型验证 - 多父节点标签树（DAG + 环检测）— 1000 节点</h4>
+        <el-button type="primary" @click="$router.push('/prototype/dag-tag-tree-1k')">
+          打开 1000 节点原型页面
+        </el-button>
+        <p class="tip-text">
+          <small>大规模 DAG（约 1000 节点）下的环检测 + 层级限制 + WebGL 渲染性能验证</small>
+        </p>
+      </div>
+      <div class="jump-section">
+        <h4>交互原型 - 大规模 DAG 节点选取（1000+ 节点快速定位）</h4>
+        <el-button type="primary" @click="$router.push('/prototype/node-selector')">
+          打开节点选取原型
+        </el-button>
+        <p class="tip-text">
+          <small>动物分类 DAG（多父节点场景），验证树形导航、搜索、聚焦模式、虚拟列表等交互方案</small>
+        </p>
+      </div>
     </div>
   </div>
 </template>

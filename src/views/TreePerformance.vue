@@ -3,14 +3,10 @@ import { Renderer as WebGLRenderer } from '@antv/g-webgl'
 import { Graph } from '@antv/g6'
 import { createPlantTree, createPlantDag, getLevelColor, PLANT_LEVEL_NAMES } from '@/prototype/plantTree'
 import {
-  registerGpuLayouts,
   initWasmLayouts,
   isWasmMultiThread,
   getWasmInitError,
 } from '@/g6-layouts'
-
-// GPU 布局同步注册，import 时即可完成
-registerGpuLayouts()
 
 export default {
   name: 'TreePerformance',
@@ -19,7 +15,7 @@ export default {
       // 配置
       nodeCount: 2000,
       customCount: 2000,
-      layoutType: 'compact-box',
+      layoutType: 'dagre-wasm',
       rankdir: 'TB',
       showLabel: false,
       nodeSize: 6,
@@ -70,11 +66,11 @@ export default {
     },
     /** 树形布局列表（仅 tree 模式可用） */
     treeLayoutTypes() {
-      return ['compact-box', 'dendrogram', 'mindmap', 'indented']
+      return ['dagre-wasm']
     },
     /** 当前布局是否为 WASM 布局 */
     isWasmLayout() {
-      return ['fruchterman-wasm', 'force-atlas2-wasm', 'dagre-wasm'].includes(this.layoutType)
+      return true
     },
   },
   mounted() {
@@ -116,12 +112,7 @@ export default {
     },
     /** 切换数据类型时自动调整布局 */
     onDataTypeChange() {
-      if (this.dataType === 'dag') {
-        // DAG 不支持树形布局，自动切换到 dagre
-        if (this.treeLayoutTypes.includes(this.layoutType)) {
-          this.layoutType = 'dagre'
-        }
-      }
+      // DAG 模式下 dagre-wasm 仍然可用，无需切换
     },
     ensureGraph() {
       const sig = this.configSignature()
@@ -192,52 +183,8 @@ export default {
     layoutConfig() {
       const base = { type: this.layoutType }
       // 捕获为本地变量，避免闭包捕获 this 导致 Vue 响应式依赖追踪
-      const nodeSize = this.nodeSize
       const rankdir = this.rankdir
-      if (['compact-box', 'dendrogram', 'mindmap', 'indented'].includes(this.layoutType)) {
-        // 树形布局：O(n) 紧凑排布，靠 getVGap/getHGap 控制间距，避免坐标过宽
-        Object.assign(base, {
-          direction: rankdir === 'LR' ? 'LR' : 'TB',
-          getHeight: () => nodeSize,
-          getWidth: () => nodeSize,
-          getVGap: () => 4,
-          getHGap: () => 4,
-        })
-      }
-      else if (this.layoutType === 'dagre') {
-        // 注意：dagre 会把同层节点排成一行，1w 叶子会撑出极宽坐标，布局慢且易卡顿
-        Object.assign(base, {
-          rankdir,
-          nodesep: 30,
-          ranksep: 40,
-        })
-      }
-      else if (this.layoutType === 'force') {
-        Object.assign(base, {
-          linkDistance: 30,
-          nodeStrength: -30,
-          preventOverlap: true,
-        })
-      }
-      else if (this.layoutType === 'fruchterman-gpu') {
-        // GPU Fruchterman：WebGPU 加速，适合万级节点的力导向布局
-        Object.assign(base, {
-          maxIteration: 1000,
-          gravity: 10,
-          speed: 5,
-        })
-      }
-      else if (this.layoutType === 'gforce-gpu') {
-        // GPU GForce：WebGPU 加速的快速力导向布局
-        Object.assign(base, {
-          maxIteration: 500,
-          linkDistance: 30,
-          nodeStrength: 1000,
-          edgeStrength: 200,
-          gravity: 10,
-        })
-      }
-      else if (this.layoutType === 'fruchterman-wasm') {
+      if (this.layoutType === 'fruchterman-wasm') {
         // WASM Fruchterman：Rust+WASM 加速，threads 由 wrapper 自动注入
         Object.assign(base, {
           maxIteration: 1000,
@@ -258,11 +205,12 @@ export default {
       }
       else if (this.layoutType === 'dagre-wasm') {
         // WASM Dagre：Rust 实现的分层布局，比 JS dagre 更快
-        // WASM dagre 使用小写 rankdir
+        // WASM dagre 使用小写 rankdir；align 必须显式传入，否则内部 toLowerCase 会报 undefined
         Object.assign(base, {
           rankdir: rankdir === 'LR' ? 'lr' : 'tb',
           nodesep: 30,
           ranksep: 40,
+          align: 'ul',
         })
       }
       return base
@@ -485,26 +433,18 @@ export default {
           <div class="form-row">
             <span class="row-label">布局</span>
             <el-select v-model="layoutType" size="small" style="flex: 1">
-              <el-option label="CompactBox（树形·快）" value="compact-box" :disabled="isDag"></el-option>
-              <el-option label="Dendrogram（树形）" value="dendrogram" :disabled="isDag"></el-option>
-              <el-option label="Mindmap（树形）" value="mindmap" :disabled="isDag"></el-option>
-              <el-option label="Indented（树形）" value="indented" :disabled="isDag"></el-option>
-              <el-option label="Dagre（分层·慢）" value="dagre"></el-option>
-              <el-option label="Force（力导向·极慢）" value="force"></el-option>
-              <el-option label="Fruchterman GPU（力导向·GPU）" value="fruchterman-gpu"></el-option>
-              <el-option label="GForce GPU（力导向·GPU）" value="gforce-gpu"></el-option>
               <el-option
-                label="Fruchterman WASM（力导向·WASM）"
+                label="Fruchterman WASM（力导向）"
                 value="fruchterman-wasm"
                 :disabled="!wasmAvailable"
               ></el-option>
               <el-option
-                label="ForceAtlas2 WASM（力导向·WASM）"
+                label="ForceAtlas2 WASM（力导向）"
                 value="force-atlas2-wasm"
                 :disabled="!wasmAvailable"
               ></el-option>
               <el-option
-                label="Dagre WASM（分层·WASM）"
+                label="Dagre WASM（分层）"
                 value="dagre-wasm"
                 :disabled="!wasmAvailable"
               ></el-option>
@@ -547,10 +487,6 @@ export default {
         <div class="panel-section">
           <h4>加速引擎状态</h4>
           <div class="engine-status">
-            <div class="engine-row">
-              <span class="engine-label">GPU 布局</span>
-              <span class="engine-badge engine-ready">已就绪</span>
-            </div>
             <div class="engine-row">
               <span class="engine-label">WASM 布局</span>
               <span v-if="wasmStatus === 'pending'" class="engine-badge engine-pending">初始化中…</span>

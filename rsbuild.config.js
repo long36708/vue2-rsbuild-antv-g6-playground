@@ -17,6 +17,7 @@ export default defineConfig({
     entry: {
       index: './src/index.js',
     },
+    exclude: ['@antv/layout-wasm'],
   },
   server: {
     // 显式使用 localhost，确保浏览器视为可信 origin，COOP/COEP 头才能生效

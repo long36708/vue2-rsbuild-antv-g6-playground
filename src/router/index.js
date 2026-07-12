@@ -19,6 +19,16 @@ const routes = [
     name: 'TreePerformance',
     component: () => import('../views/TreePerformance.vue'),
   },
+  {
+    path: '/prototype/dag-tag-tree-1k',
+    name: 'TagDagPrototype1k',
+    component: () => import('../views/TagDagPrototype1k.vue'),
+  },
+  {
+    path: '/prototype/node-selector',
+    name: 'NodeSelectorPrototype',
+    component: () => import('../views/NodeSelectorPrototype.vue'),
+  },
 ]
 
 const router = new VueRouter({

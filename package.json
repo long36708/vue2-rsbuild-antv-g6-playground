@@ -22,7 +22,8 @@
     "v-contextmenu": "^2.9.2",
     "vue": "2.7.16",
     "vue-router": "3.6.5",
-    "vue-template-compiler": "2.7.16"
+    "vue-template-compiler": "2.7.16",
+    "vue-virt-list": "^1.7.0"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^7.2.0",

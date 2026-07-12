@@ -35,6 +35,9 @@ importers:
       vue-template-compiler:
         specifier: 2.7.16
         version: 2.7.16
+      vue-virt-list:
+        specifier: ^1.7.0
+        version: 1.7.0(vue@2.7.16)
     devDependencies:
       '@antfu/eslint-config':
         specifier: ^7.2.0
@@ -3129,6 +3132,17 @@ packages:
     peerDependencies:
       vue: ^2.5.0
 
+  vue-demi@0.14.10:
+    resolution: {integrity: sha512-nMZBOwuzabUO0nLgIcc6rycZEebF6eeUfaiQx9+WSk8e29IbLvPU9feI6tqW4kTo3hvoYAJkMh8n8D0fuISphg==}
+    engines: {node: '>=12'}
+    hasBin: true
+    peerDependencies:
+      '@vue/composition-api': ^1.0.0-rc.1
+      vue: ^3.0.0-0 || ^2.6.0
+    peerDependenciesMeta:
+      '@vue/composition-api':
+        optional: true
+
   vue-eslint-parser@10.2.0:
     resolution: {integrity: sha512-CydUvFOQKD928UzZhTp4pr2vWz1L+H99t7Pkln2QSPdvmURT0MoC4wUccfCnuEaihNsu9aYYyk+bep8rlfkUXw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -3173,6 +3187,15 @@ packages:
 
   vue-template-es2015-compiler@1.9.1:
     resolution: {integrity: sha512-4gDntzrifFnCEvyoO8PqyJDmguXgVPxKiIxrBKjIowvL9l+N66196+72XVYR8BBf1Uv1Fgt3bGevJ+sEmxfZzw==}
+
+  vue-virt-list@1.7.0:
+    resolution: {integrity: sha512-6rTp2Q3y5RaECFq2JHuYO04wImaVu8mYGuwG9/9A7qxMbL99bNr9iUxVlr8EMn6E9M4Wo1MhbYcIeI81NvVvWg==}
+    peerDependencies:
+      '@vue/composition-api': ^1.0.0-rc.1
+      vue: ^2.0.0 || >=3.0.0
+    peerDependenciesMeta:
+      '@vue/composition-api':
+        optional: true
 
   vue@2.7.16:
     resolution: {integrity: sha512-4gCtFXaAA3zYZdTp5s4Hl2sozuySsgz4jy1EnpBHNfpMa9dK1ZCG7viqBPCwXtmgc8nHqUsAu3G4gtmXkkY3Sw==}
@@ -6726,6 +6749,10 @@ snapshots:
     dependencies:
       vue: 2.7.16
 
+  vue-demi@0.14.10(vue@2.7.16):
+    dependencies:
+      vue: 2.7.16
+
   vue-eslint-parser@10.2.0(eslint@9.39.2(jiti@2.6.1)):
     dependencies:
       debug: 4.4.3
@@ -6824,6 +6851,11 @@ snapshots:
       he: 1.2.0
 
   vue-template-es2015-compiler@1.9.1: {}
+
+  vue-virt-list@1.7.0(vue@2.7.16):
+    dependencies:
+      vue: 2.7.16
+      vue-demi: 0.14.10(vue@2.7.16)
 
   vue@2.7.16:
     dependencies:

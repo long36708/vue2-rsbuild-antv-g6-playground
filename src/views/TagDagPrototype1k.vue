@@ -1,0 +1,1237 @@
+<script>
+import { Renderer as WebGLRenderer } from '@antv/g-webgl'
+import { Graph } from '@antv/g6'
+import {
+  addEdge,
+  addNode,
+  createLargeSampleDag,
+  getAncestors,
+  getChildren,
+  getDescendants,
+  getNodeLevel,
+  getParents,
+  getStateSummary,
+  MAX_LEVEL,
+  removeEdge,
+  removeNode,
+  searchNodes,
+  toG6Data,
+  updateNodeLabel,
+  wouldCreateCycle,
+  wouldExceedMaxLevel,
+} from '@/prototype/tagDag'
+
+export default {
+  name: 'TagDagPrototype1k',
+  data() {
+    return {
+      graph: null,
+      selectedNodeId: null,
+      // 表单
+      newNodeId: '',
+      newNodeLabel: '',
+      edgeSource: '',
+      edgeTarget: '',
+      newNodeParents: [],
+      // 右键菜单当前作用的节点（由 v-contextmenu 配合 G6 事件确定）
+      contextMenuNodeId: null,
+      // 节点操作对话框
+      dialogVisible: false,
+      dialogType: '', // 'addChild' | 'addParent' | 'edit'
+      dialogNodeId: null,
+      dialogForm: { id: '', label: '', parentId: '' },
+      removeNodeId: '',
+      removeEdgeIndex: null,
+      // 搜索
+      searchKeyword: '',
+      searchResults: [],
+      // 反馈
+      lastAction: null,
+      // 加载状态
+      graphLoading: false,
+      // ---- 非响应式数据（避免 Vue 2 深度劫持万级节点）----
+      _dag: null,
+      _nodeVersion: 0,
+      _searchTimer: null,
+      // 新增：层级筛选
+      visibleLevels: [], // 选中的层级，空数组表示全部显示
+      // 新增：节点列表虚拟滚动
+      nodeListScrollTop: 0,
+      nodeListPageSize: 50,
+      // 新增：聚焦模式
+      focusMode: false,
+      focusedNodeId: null,
+    }
+  },
+  computed: {
+    dag() {
+      return this._dag
+    },
+    maxLevel() {
+      return MAX_LEVEL
+    },
+    nodeOptions() {
+      // 依赖 _nodeVersion 手动触发更新
+      this._nodeVersion // eslint-disable-line
+      return [...this._dag.nodes.values()]
+    },
+    summary() {
+      this._nodeVersion // eslint-disable-line
+      return getStateSummary(this._dag)
+    },
+    selectedNode() {
+      if (!this.selectedNodeId)
+        return null
+      return this._dag.nodes.get(this.selectedNodeId) || null
+    },
+    selectedLevel() {
+      if (!this.selectedNodeId)
+        return 0
+      return getNodeLevel(this._dag, this.selectedNodeId)
+    },
+    selectedParents() {
+      if (!this.selectedNodeId)
+        return []
+      return getParents(this._dag, this.selectedNodeId).map(id => `${this._dag.nodes.get(id)?.label || id}（${id}）`)
+    },
+    selectedChildren() {
+      if (!this.selectedNodeId)
+        return []
+      return getChildren(this._dag, this.selectedNodeId).map(id => `${this._dag.nodes.get(id)?.label || id}（${id}）`)
+    },
+    selectedAncestors() {
+      if (!this.selectedNodeId)
+        return []
+      return getAncestors(this._dag, this.selectedNodeId).map(id => `${this._dag.nodes.get(id)?.label || id}（${id}）`)
+    },
+    selectedDescendants() {
+      if (!this.selectedNodeId)
+        return []
+      return getDescendants(this._dag, this.selectedNodeId).map(id => `${this._dag.nodes.get(id)?.label || id}（${id}）`)
+    },
+    edgePreview() {
+      if (!this.edgeSource || !this.edgeTarget)
+        return null
+      if (this.edgeSource === this.edgeTarget) {
+        return { wouldCycle: true, safe: false, info: false, message: '⚠ 自环：不能添加' }
+      }
+      const exists = this._dag.childrenMap.get(this.edgeSource)?.has(this.edgeTarget)
+      if (exists) {
+        return { wouldCycle: false, safe: false, info: true, message: '边已存在' }
+      }
+      const wouldCycle = wouldCreateCycle(this._dag, this.edgeSource, this.edgeTarget)
+      if (wouldCycle) {
+        return { wouldCycle: true, safe: false, info: false, message: '⚠ 会形成环，禁止添加' }
+      }
+      const wouldExceed = wouldExceedMaxLevel(this._dag, this.edgeSource, this.edgeTarget)
+      if (wouldExceed) {
+        return { wouldCycle: false, safe: false, info: false, message: `⚠ 会超过最大层级限制（${MAX_LEVEL} 级），禁止添加` }
+      }
+      return { wouldCycle: false, safe: true, info: false, message: '✓ 安全，可以添加' }
+    },
+    dialogTitle() {
+      if (this.dialogType === 'addChild')
+        return '添加子节点'
+      if (this.dialogType === 'addParent')
+        return '添加父节点'
+      if (this.dialogType === 'edit')
+        return '修改节点信息'
+      return ''
+    },
+    // 新增：按层级分组的节点统计
+    levelStats() {
+      this._nodeVersion // eslint-disable-line
+      const stats = []
+      const memo = new Map()
+      for (let i = 1; i <= MAX_LEVEL; i++) {
+        stats.push({ level: i, count: 0 })
+      }
+      for (const node of this._dag.nodes.values()) {
+        const level = getNodeLevel(this._dag, node.id, memo)
+        if (level <= MAX_LEVEL) {
+          stats[level - 1].count++
+        }
+      }
+      return stats
+    },
+    // 新增：可见节点 ID 集合
+    visibleNodeIds() {
+      if (this.visibleLevels.length === 0) {
+        return new Set([...this._dag.nodes.keys()])
+      }
+      const memo = new Map()
+      const ids = new Set()
+      for (const node of this._dag.nodes.values()) {
+        const level = getNodeLevel(this._dag, node.id, memo)
+        if (this.visibleLevels.includes(level)) {
+          ids.add(node.id)
+        }
+      }
+      return ids
+    },
+    // 新增：分页后的节点列表（用于虚拟滚动）
+    paginatedNodes() {
+      const start = Math.floor(this.nodeListScrollTop / 30) * this.nodeListPageSize
+      const end = start + this.nodeListPageSize * 2
+      return this.nodeOptions.slice(start, end)
+    },
+  },
+  created() {
+    // 在 created 中初始化 dag，不经过 Vue 2 的响应式系统
+    this._dag = Object.freeze(createLargeSampleDag(1000))
+    // 默认显示所有层级
+    this.visibleLevels = []
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.initGraph()
+    })
+  },
+  beforeDestroy() {
+    clearTimeout(this._searchTimer)
+    if (this.graph) {
+      this.graph.destroy()
+      this.graph = null
+    }
+  },
+  methods: {
+    initGraph() {
+      const container = this.$refs.graphContainer
+      if (!container)
+        return
+
+      this.graphLoading = true
+      const g6Data = toG6Data(this._dag)
+
+      this.graph = new Graph({
+        container,
+        width: container.offsetWidth || 800,
+        height: container.offsetHeight || 600,
+        autoFit: 'view',
+        data: g6Data,
+        // 全部图层使用 WebGL 渲染，提升万级节点渲染性能
+        renderer: () => new WebGLRenderer(),
+        node: {
+          style: {
+            size: 24,
+            fill: '#C6E5FF',
+            stroke: '#5B8FF9',
+            lineWidth: 1,
+            labelText: d => d.data?.label || d.id,
+            labelPlacement: 'bottom',
+            labelFontSize: 10,
+            labelFill: '#333',
+            labelMaxWidth: 60,
+            labelWordWrap: true,
+            labelMaxLines: 1,
+            labelOverflow: 'hide',
+          },
+          state: {
+            selected: {
+              fill: '#FFE7BA',
+              stroke: '#FA8C16',
+              lineWidth: 3,
+            },
+            searched: {
+              fill: '#D3F261',
+              stroke: '#7CB305',
+              lineWidth: 3,
+            },
+            inactive: {
+              fill: '#f5f5f5',
+              stroke: '#d9d9d9',
+              lineWidth: 1,
+              labelFill: '#bbb',
+            },
+            hovered: {
+              size: 32,
+              fill: '#FFF7E6',
+              stroke: '#FAAD14',
+              lineWidth: 3,
+              shadowColor: '#FAAD14',
+              shadowBlur: 10,
+            },
+            focused: {
+              fill: '#FFD591',
+              stroke: '#FA8C16',
+              lineWidth: 4,
+            },
+          },
+        },
+        edge: {
+          style: {
+            endArrow: true,
+            stroke: '#e0e0e0',
+            lineWidth: 1,
+          },
+        },
+        layout: {
+          type: 'dagre',
+          rankdir: 'TB',
+          nodesep: 30,
+          ranksep: 50,
+        },
+        behaviors: [
+          { type: 'drag-canvas', enableOptimize: true },
+          { type: 'zoom-canvas', enableOptimize: true },
+          'drag-element',
+          // 新增：悬停激活行为
+          { type: 'hover-activate', activeState: 'hovered', inactiveState: 'inactive' },
+        ],
+        animation: false,
+      })
+
+      this.graph.on('node:click', (evt) => {
+        const nodeId = evt.target.id
+        this.selectNode(nodeId)
+      })
+
+      this.graph.on('node:contextmenu', (evt) => {
+        const nodeId = evt.target.id
+        this.contextMenuNodeId = nodeId
+        this.selectNode(nodeId)
+      })
+
+      this.graph.on('canvas:contextmenu', () => {
+        this.contextMenuNodeId = null
+      })
+
+      this.graph.on('canvas:click', () => {
+        this.selectNode(null)
+        this.contextMenuNodeId = null
+      })
+
+      this.graph.on('node:click', () => {
+        this.contextMenuNodeId = null
+      })
+
+      // 新增：双击节点进入聚焦模式
+      this.graph.on('node:dblclick', (evt) => {
+        const nodeId = evt.target.id
+        this.enterFocusMode(nodeId)
+      })
+
+      // 使用 requestAnimationFrame 让 loading 状态先渲染出来，再执行 render
+      requestAnimationFrame(() => {
+        this.graph.render().then(() => {
+          this.graphLoading = false
+        })
+      })
+    },
+    // ---- 右键菜单（v-contextmenu）----
+    menuAddChild() {
+      const nodeId = this.contextMenuNodeId
+      if (!nodeId)
+        return
+      this.dialogType = 'addChild'
+      this.dialogNodeId = nodeId
+      this.dialogForm = { id: '', label: '', parentId: nodeId }
+      this.dialogVisible = true
+    },
+    menuAddParent() {
+      const nodeId = this.contextMenuNodeId
+      if (!nodeId)
+        return
+      this.dialogType = 'addParent'
+      this.dialogNodeId = nodeId
+      this.dialogForm = { id: '', label: '', parentId: '' }
+      this.dialogVisible = true
+    },
+    menuEdit() {
+      const nodeId = this.contextMenuNodeId
+      if (!nodeId)
+        return
+      const node = this._dag.nodes.get(nodeId)
+      this.dialogType = 'edit'
+      this.dialogNodeId = nodeId
+      this.dialogForm = { id: node.id, label: node.label, parentId: '' }
+      this.dialogVisible = true
+    },
+    menuDelete() {
+      const id = this.contextMenuNodeId
+      if (!id)
+        return
+      const result = removeNode(this._dag, id)
+      this.lastAction = { ok: result.ok, message: result.ok ? `节点「${id}」删除成功` : result.error }
+      if (result.ok) {
+        if (this.selectedNodeId === id)
+          this.selectedNodeId = null
+        this.refreshGraph()
+      }
+    },
+    confirmDialog() {
+      const type = this.dialogType
+      const nodeId = this.dialogNodeId
+      const form = this.dialogForm
+      if (type === 'addChild') {
+        const id = form.id.trim()
+        const label = form.label.trim()
+        if (!id) {
+          this.lastAction = { ok: false, message: '请输入节点 ID' }
+          return
+        }
+        const r = addNode(this._dag, id, label)
+        if (!r.ok) {
+          this.lastAction = { ok: false, message: r.error }
+          return
+        }
+        const e = addEdge(this._dag, nodeId, id) // 当前节点作为父
+        this.lastAction = { ok: true, message: e.ok ? `已添加子节点「${id}」并关联` : `节点「${id}」已添加，但关联失败：${e.error}` }
+        this.refreshGraph()
+      }
+      else if (type === 'addParent') {
+        if (!form.parentId) {
+          this.lastAction = { ok: false, message: '请选择父节点' }
+          return
+        }
+        const e = addEdge(this._dag, form.parentId, nodeId) // 选中的作为父
+        this.lastAction = { ok: e.ok, message: e.ok ? `已为「${nodeId}」添加父节点「${form.parentId}」` : e.error }
+        if (e.ok)
+          this.refreshGraph()
+      }
+      else if (type === 'edit') {
+        const r = updateNodeLabel(this._dag, nodeId, form.label)
+        this.lastAction = { ok: r.ok, message: r.ok ? `节点「${nodeId}」名称已更新为「${form.label}」` : r.error }
+        if (r.ok)
+          this.refreshGraph()
+      }
+      this.dialogVisible = false
+    },
+    // 新增：进入聚焦模式
+    enterFocusMode(nodeId) {
+      if (!this.graph) return
+      this.focusMode = true
+      this.focusedNodeId = nodeId
+      this.selectedNodeId = nodeId
+      
+      // 获取该节点的邻居（直接父节点和子节点）
+      const parents = getParents(this._dag, nodeId)
+      const children = getChildren(this._dag, nodeId)
+      const neighborIds = new Set([nodeId, ...parents, ...children])
+      
+      // 高亮邻居，隐藏其他节点
+      const batchStates = {}
+      this._dag.nodes.forEach((_, id) => {
+        if (neighborIds.has(id)) {
+          batchStates[id] = ['focused']
+        } else {
+          batchStates[id] = ['inactive']
+        }
+      })
+      
+      this.graph.setElementState(batchStates)
+      
+      // 将选中节点居中
+      this.graph.fitView({ 
+        effectTiming: { duration: 500 },
+        rules: { direction: 'both', onlyOutOfView: true }
+      })
+    },
+    // 新增：退出聚焦模式
+    exitFocusMode() {
+      this.focusMode = false
+      this.focusedNodeId = null
+      this.applyHighlights()
+      this.graph?.fitView({ effectTiming: { duration: 300 } })
+    },
+    // 新增：切换层级显示
+    toggleLevel(level) {
+      const index = this.visibleLevels.indexOf(level)
+      if (index > -1) {
+        this.visibleLevels.splice(index, 1)
+      } else {
+        this.visibleLevels.push(level)
+      }
+      this.applyLevelFilter()
+    },
+    // 新增：应用层级过滤
+    applyLevelFilter() {
+      if (!this.graph) return
+      
+      const visibleIds = this.visibleNodeIds
+      const batchStates = {}
+      
+      this._dag.nodes.forEach((_, id) => {
+        if (!visibleIds.has(id)) {
+          batchStates[id] = ['inactive']
+        } else if (this.searchResults.some(n => n.id === id)) {
+          batchStates[id] = ['searched']
+        } else if (this.selectedNodeId === id) {
+          batchStates[id] = ['selected']
+        } else {
+          batchStates[id] = []
+        }
+      })
+      
+      this.graph.setElementState(batchStates)
+    },
+    // 新增：从列表快速定位节点
+    quickLocateNode(nodeId) {
+      this.selectNode(nodeId)
+      if (this.graph) {
+        this.graph.focusElement(nodeId, { 
+          effectTiming: { duration: 500 } 
+        })
+      }
+    },
+    selectNode(nodeId) {
+      this.selectedNodeId = nodeId
+      this.applyHighlights()
+    },
+    async refreshGraph() {
+      if (!this.graph)
+        return
+      this._nodeVersion++
+      this.graph.setData(toG6Data(this._dag))
+      await this.graph.render()
+      if (this.selectedNodeId && !this._dag.nodes.has(this.selectedNodeId)) {
+        this.selectedNodeId = null
+      }
+      this.applyHighlights()
+    },
+    /** 统一应用搜索高亮和选中状态（批量设置，G6 v5 格式为 { [id]: state[] }） */
+    applyHighlights() {
+      if (!this.graph)
+        return
+      const searchIds = new Set(this.searchResults.map(n => n.id))
+      const hasFilter = searchIds.size > 0 || this.selectedNodeId
+
+      const batchStates = {}
+      this._dag.nodes.forEach((_, id) => {
+        if (!this.visibleNodeIds.has(id)) {
+          batchStates[id] = ['inactive']
+        } else if (searchIds.has(id)) {
+          batchStates[id] = ['searched']
+        }
+        else if (this.selectedNodeId === id) {
+          batchStates[id] = ['selected']
+        }
+        else if (hasFilter) {
+          batchStates[id] = ['inactive']
+        }
+        else {
+          batchStates[id] = []
+        }
+      })
+
+      this.graph.setElementState(batchStates)
+    },
+    handleSearch() {
+      if (!this.searchKeyword.trim()) {
+        this.clearSearch()
+        return
+      }
+      // debounce 200ms，避免万级节点下每次输入都触发全量扫描
+      clearTimeout(this._searchTimer)
+      this._searchTimer = setTimeout(() => {
+        this.searchResults = searchNodes(this._dag, this.searchKeyword)
+        this.applyHighlights()
+      }, 200)
+    },
+    clearSearch() {
+      this.searchResults = []
+      this.applyHighlights()
+    },
+    focusNode(nodeId) {
+      this.selectNode(nodeId)
+      if (this.graph && this.graph.focusElement) {
+        this.graph.focusElement(nodeId)
+      }
+    },
+    handleAddNode() {
+      const id = this.newNodeId.trim()
+      const label = this.newNodeLabel.trim()
+      if (!id) {
+        this.lastAction = { ok: false, message: '请输入节点 ID' }
+        return
+      }
+      const result = addNode(this._dag, id, label)
+      if (!result.ok) {
+        this.lastAction = { ok: false, message: result.error }
+        return
+      }
+      // 与已存在节点建立关联（支持多父节点）
+      const failed = []
+      for (const parentId of this.newNodeParents) {
+        const edgeResult = addEdge(this._dag, parentId, id)
+        if (!edgeResult.ok)
+          failed.push(edgeResult.error)
+      }
+      const count = this.newNodeParents.length - failed.length
+      this.lastAction = {
+        ok: true,
+        message: failed.length
+          ? `节点「${id}」添加成功，已建立 ${count} 条关联，${failed.length} 条失败：${failed.join('；')}`
+          : `节点「${id}」添加成功，已建立 ${count} 条父节点关联`,
+      }
+      this.newNodeId = ''
+      this.newNodeLabel = ''
+      this.newNodeParents = []
+      this.refreshGraph()
+    },
+    handleAddEdge() {
+      if (!this.edgeSource || !this.edgeTarget) {
+        this.lastAction = { ok: false, message: '请选择源节点和目标节点' }
+        return
+      }
+      const result = addEdge(this._dag, this.edgeSource, this.edgeTarget)
+      this.lastAction = {
+        ok: result.ok,
+        message: result.ok ? `边「${this.edgeSource} → ${this.edgeTarget}」添加成功` : result.error,
+      }
+      if (result.ok) {
+        this.edgeSource = ''
+        this.edgeTarget = ''
+        this.refreshGraph()
+      }
+    },
+    handleRemoveNode() {
+      if (!this.removeNodeId) {
+        this.lastAction = { ok: false, message: '请选择要删除的节点' }
+        return
+      }
+      const result = removeNode(this._dag, this.removeNodeId)
+      this.lastAction = { ok: result.ok, message: result.ok ? `节点「${this.removeNodeId}」删除成功` : result.error }
+      if (result.ok) {
+        if (this.selectedNodeId === this.removeNodeId) {
+          this.selectedNodeId = null
+        }
+        this.removeNodeId = ''
+        this.refreshGraph()
+      }
+    },
+    handleRemoveEdge() {
+      if (this.removeEdgeIndex === null) {
+        this.lastAction = { ok: false, message: '请选择要删除的边' }
+        return
+      }
+      const edge = this._dag.edges[this.removeEdgeIndex]
+      if (!edge) {
+        this.lastAction = { ok: false, message: '边不存在' }
+        return
+      }
+      const result = removeEdge(this._dag, edge.source, edge.target)
+      this.lastAction = {
+        ok: result.ok,
+        message: result.ok ? `边「${edge.source} → ${edge.target}」删除成功` : result.error,
+      }
+      if (result.ok) {
+        this.removeEdgeIndex = null
+        this.refreshGraph()
+      }
+    },
+  },
+}
+</script>
+
+<template>
+  <div class="tag-dag-prototype">
+    <div class="prototype-header">
+      <h2>多父节点标签树原型（DAG + 环检测）— 1000 节点</h2>
+      <p class="prototype-desc">
+        验证：大规模 DAG（约 1000 节点）下的环检测 + 最多 {{ maxLevel }} 级层级限制 + 节点搜索 + WebGL 渲染性能。
+        <span class="interaction-tips">💡 提示：悬停查看节点详情 | 单击选中 | 双击进入聚焦模式 | 使用层级筛选器减少干扰</span>
+      </p>
+    </div>
+
+    <div class="prototype-body">
+      <!-- 左侧：g6 图画布 -->
+      <div class="graph-area">
+        <div v-if="graphLoading" class="graph-loading">
+          <div class="loading-spinner"></div>
+          <span>布局计算中（1000 节点），请稍候…</span>
+        </div>
+        
+        <!-- 新增：聚焦模式提示 -->
+        <div v-if="focusMode" class="focus-mode-banner">
+          <span>聚焦模式：节点 {{ focusedNodeId }}</span>
+          <el-button size="mini" type="primary" @click="exitFocusMode">退出聚焦</el-button>
+        </div>
+        
+        <div ref="graphContainer" v-contextmenu:ctxmenu class="graph-container"></div>
+      </div>
+
+      <!-- 右侧：控制面板 -->
+      <div class="control-panel">
+        <!-- 新增：层级筛选器 -->
+        <div class="panel-section level-filter-section">
+          <h4>层级筛选器</h4>
+          <div class="level-buttons">
+            <el-button
+              v-for="stat in levelStats"
+              :key="stat.level"
+              :type="visibleLevels.length === 0 || visibleLevels.includes(stat.level) ? 'primary' : 'default'"
+              size="mini"
+              @click="toggleLevel(stat.level)"
+            >
+              L{{ stat.level }} ({{ stat.count }})
+            </el-button>
+          </div>
+          <div class="level-actions">
+            <el-button size="mini" @click="visibleLevels = []; applyLevelFilter()">全选</el-button>
+            <el-button size="mini" @click="visibleLevels = []; applyLevelFilter()">清空</el-button>
+          </div>
+        </div>
+
+        <!-- 搜索节点 -->
+        <div class="panel-section">
+          <h4>搜索节点</h4>
+          <div class="form-row">
+            <el-input
+              v-model="searchKeyword"
+              placeholder="按 ID 或名称搜索"
+              size="small"
+              clearable
+              @input="handleSearch"
+              @clear="clearSearch"
+            ></el-input>
+          </div>
+          <div v-if="searchKeyword && searchResults.length > 0" class="search-results">
+            <div
+              v-for="node in searchResults"
+              :key="node.id"
+              class="search-result-item"
+              @click="focusNode(node.id)"
+            >
+              {{ node.label }}（{{ node.id }}）<span class="search-level">L{{ node.level }}</span>
+            </div>
+          </div>
+          <div v-if="searchKeyword && searchResults.length === 0" class="search-empty">
+            未找到匹配节点
+          </div>
+        </div>
+
+        <!-- 新增：快速节点导航列表 -->
+        <div class="panel-section node-list-section">
+          <h4>快速导航（共 {{ nodeOptions.length }} 个节点）</h4>
+          <div class="node-list-virtual-scroll" @scroll="(e) => nodeListScrollTop = e.target.scrollTop">
+            <div
+              v-for="node in paginatedNodes"
+              :key="node.id"
+              class="node-list-item"
+              :class="{ 'is-selected': selectedNodeId === node.id }"
+              @click="quickLocateNode(node.id)"
+            >
+              <span class="node-label">{{ node.label }}</span>
+              <span class="node-id-badge">{{ node.id }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 添加节点 -->
+        <div class="panel-section">
+          <h4>添加节点</h4>
+          <div class="form-row">
+            <el-input v-model="newNodeId" placeholder="节点 ID（如 husky）" size="small" @keyup.enter.native="handleAddNode"></el-input>
+            <el-input v-model="newNodeLabel" placeholder="显示名称" size="small" @keyup.enter.native="handleAddNode"></el-input>
+            <el-button type="primary" size="small" @click="handleAddNode">
+              添加
+            </el-button>
+          </div>
+          <div class="form-row">
+            <el-select v-model="newNodeParents" placeholder="父节点（可多选，建立关联）" size="small" multiple filterable style="width: 100%">
+              <el-option v-for="node in nodeOptions" :key="node.id" :label="`${node.label}（${node.id}）`" :value="node.id"></el-option>
+            </el-select>
+          </div>
+        </div>
+
+        <!-- 添加边 -->
+        <div class="panel-section">
+          <h4>添加边（父 → 子）</h4>
+          <div class="form-row">
+            <el-select v-model="edgeSource" placeholder="源节点（父）" size="small" filterable>
+              <el-option v-for="node in nodeOptions" :key="node.id" :label="`${node.label}（${node.id}）`" :value="node.id"></el-option>
+            </el-select>
+            <span class="arrow">→</span>
+            <el-select v-model="edgeTarget" placeholder="目标节点（子）" size="small" filterable>
+              <el-option v-for="node in nodeOptions" :key="node.id" :label="`${node.label}（${node.id}）`" :value="node.id"></el-option>
+            </el-select>
+            <el-button type="primary" size="small" :disabled="!edgePreview?.safe" @click="handleAddEdge">
+              添加
+            </el-button>
+          </div>
+          <div v-if="edgePreview" class="edge-preview" :class="{ 'preview-warn': edgePreview.wouldCycle, 'preview-ok': edgePreview.safe, 'preview-info': edgePreview.info }">
+            {{ edgePreview.message }}
+          </div>
+        </div>
+
+        <!-- 删除节点 -->
+        <div class="panel-section">
+          <h4>删除节点</h4>
+          <div class="form-row">
+            <el-select v-model="removeNodeId" placeholder="选择节点" size="small" filterable>
+              <el-option v-for="node in nodeOptions" :key="node.id" :label="`${node.label}（${node.id}）`" :value="node.id"></el-option>
+            </el-select>
+            <el-button type="danger" size="small" :disabled="!removeNodeId" @click="handleRemoveNode">
+              删除
+            </el-button>
+          </div>
+        </div>
+
+        <!-- 删除边 -->
+        <div class="panel-section">
+          <h4>删除边</h4>
+          <div class="form-row">
+            <el-select v-model="removeEdgeIndex" placeholder="选择边" size="small" filterable>
+              <el-option
+                v-for="(edge, i) in dag.edges"
+                :key="i"
+                :label="`${dag.nodes.get(edge.source)?.label || edge.source} → ${dag.nodes.get(edge.target)?.label || edge.target}`"
+                :value="i"
+              ></el-option>
+            </el-select>
+            <el-button type="danger" size="small" :disabled="removeEdgeIndex === null" @click="handleRemoveEdge">
+              删除
+            </el-button>
+          </div>
+        </div>
+
+        <!-- 选中节点信息 -->
+        <div v-if="selectedNode" class="panel-section">
+          <h4>选中节点：{{ selectedNode.label }}</h4>
+          <div class="node-info">
+            <div class="info-row">
+              <span class="info-label">节点 ID：</span>
+              <span class="info-value node-id">{{ selectedNode.id }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">层级：</span>
+              <span class="info-value">第 {{ selectedLevel }} 级 / 共 {{ maxLevel }} 级</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">直接父节点：</span>
+              <span class="info-value">{{ selectedParents.length ? selectedParents.join('、') : '无' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">直接子节点：</span>
+              <span class="info-value">{{ selectedChildren.length ? selectedChildren.join('、') : '无' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">所有祖先：</span>
+              <span class="info-value">{{ selectedAncestors.length ? selectedAncestors.join('、') : '无' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">所有后代：</span>
+              <span class="info-value">{{ selectedDescendants.length ? selectedDescendants.join('、') : '无' }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 状态摘要 -->
+        <div class="panel-section">
+          <h4>状态摘要</h4>
+          <div class="summary">
+            <span class="summary-item">节点数：<b>{{ summary.nodeCount }}</b></span>
+            <span class="summary-item">边数：<b>{{ summary.edgeCount }}</b></span>
+          </div>
+          <div class="edge-list">
+            <div v-for="(edge, i) in summary.edges" :key="i" class="edge-list-item">
+              {{ edge }}
+            </div>
+          </div>
+        </div>
+
+        <!-- 操作结果 -->
+        <div v-if="lastAction" class="panel-section">
+          <div class="action-result" :class="{ 'result-ok': lastAction.ok, 'result-fail': !lastAction.ok }">
+            {{ lastAction.ok ? '✓' : '✗' }} {{ lastAction.message }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右键菜单（v-contextmenu，自动定位到鼠标位置） -->
+    <!-- eslint-disable-next-line vue/no-unused-refs -->
+    <v-contextmenu ref="ctxmenu">
+      <v-contextmenu-item @click="menuAddChild">
+        添加子节点
+      </v-contextmenu-item>
+      <v-contextmenu-item @click="menuAddParent">
+        添加父节点
+      </v-contextmenu-item>
+      <v-contextmenu-item @click="menuEdit">
+        修改信息
+      </v-contextmenu-item>
+      <v-contextmenu-item divider></v-contextmenu-item>
+      <v-contextmenu-item @click="menuDelete">
+        删除节点
+      </v-contextmenu-item>
+    </v-contextmenu>
+
+    <!-- 节点操作对话框 -->
+    <el-dialog :title="dialogTitle" :visible.sync="dialogVisible" width="360px" @close="dialogVisible = false">
+      <div v-if="dialogType === 'addChild'">
+        <p class="dialog-tip">
+          将作为「{{ dialogNodeId }}」的子节点（父 → 子）
+        </p>
+        <el-input v-model="dialogForm.id" placeholder="节点 ID" size="small" class="dialog-field"></el-input>
+        <el-input v-model="dialogForm.label" placeholder="显示名称" size="small" class="dialog-field"></el-input>
+      </div>
+      <div v-else-if="dialogType === 'addParent'">
+        <p class="dialog-tip">
+          为「{{ dialogNodeId }}」选择一个父节点（父 → 子）
+        </p>
+        <el-select v-model="dialogForm.parentId" placeholder="选择父节点" size="small" filterable style="width: 100%">
+          <el-option v-for="node in nodeOptions.filter(n => n.id !== dialogNodeId)" :key="node.id" :label="`${node.label}（${node.id}）`" :value="node.id"></el-option>
+        </el-select>
+      </div>
+      <div v-else-if="dialogType === 'edit'">
+        <p class="dialog-tip">
+          修改节点「{{ dialogNodeId }}」的显示名称
+        </p>
+        <el-input v-model="dialogForm.label" placeholder="显示名称" size="small" class="dialog-field"></el-input>
+      </div>
+      <span slot="footer">
+        <el-button size="small" @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" size="small" @click="confirmDialog">确定</el-button>
+      </span>
+    </el-dialog>
+  </div>
+</template>
+
+<style scoped>
+.tag-dag-prototype {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.prototype-header {
+  padding: 12px 20px;
+  border-bottom: 1px solid #e8e8e8;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.prototype-header h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.prototype-desc {
+  margin: 0;
+  font-size: 12px;
+  color: #888;
+  line-height: 1.5;
+}
+
+.interaction-tips {
+  display: block;
+  margin-top: 4px;
+  color: #1890ff;
+  font-weight: 500;
+}
+
+.prototype-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.graph-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #fafafa;
+}
+
+.graph-container {
+  width: 100%;
+  height: 100%;
+}
+
+.graph-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  z-index: 10;
+  font-size: 14px;
+  color: #666;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e8e8e8;
+  border-top-color: #5B8FF9;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 新增：聚焦模式横幅 */
+.focus-mode-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(24, 144, 255, 0.9);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.control-panel {
+  width: 360px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 12px;
+  background: #fff;
+  border-left: 1px solid #e8e8e8;
+}
+
+.panel-section {
+  margin-bottom: 16px;
+  padding: 10px;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  background: #fcfcfc;
+}
+
+.panel-section h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #333;
+}
+
+/* 新增：层级筛选器样式 */
+.level-filter-section {
+  background: #f0f7ff;
+  border-color: #bae7ff;
+}
+
+.level-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.level-buttons .el-button {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.level-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* 新增：节点列表虚拟滚动 */
+.node-list-section {
+  max-height: 300px;
+}
+
+.node-list-virtual-scroll {
+  max-height: 250px;
+  overflow-y: auto;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  background: white;
+}
+
+.node-list-item {
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.2s;
+}
+
+.node-list-item:hover {
+  background: #e6f7ff;
+}
+
+.node-list-item.is-selected {
+  background: #fff7e6;
+  border-left: 3px solid #fa8c16;
+}
+
+.node-label {
+  font-size: 12px;
+  color: #333;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-id-badge {
+  font-size: 10px;
+  color: #999;
+  background: #f5f5f5;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  margin-left: 8px;
+}
+
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.form-row .el-input,
+.form-row .el-select {
+  width: auto;
+  flex: 1;
+  min-width: 80px;
+}
+
+.form-row .arrow {
+  color: #999;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.edge-preview {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.preview-ok {
+  background: #f6ffed;
+  color: #52c41a;
+  border: 1px solid #b7eb8f;
+}
+
+.preview-warn {
+  background: #fff2e8;
+  color: #fa8c16;
+  border: 1px solid #ffbb96;
+}
+
+.preview-info {
+  background: #e6f7ff;
+  color: #1890ff;
+  border: 1px solid #91d5ff;
+}
+
+.node-info {
+  font-size: 12px;
+}
+
+.info-row {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+
+.info-label {
+  color: #888;
+}
+
+.info-value {
+  color: #333;
+}
+
+.node-id {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  background: #f5f5f5;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: #c41d7f;
+}
+
+.summary {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.summary-item {
+  margin-right: 16px;
+}
+
+.edge-list {
+  font-size: 11px;
+  color: #666;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.edge-list-item {
+  padding: 1px 0;
+}
+
+.action-result {
+  padding: 6px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.result-ok {
+  background: #f6ffed;
+  color: #52c41a;
+  border: 1px solid #b7eb8f;
+}
+
+.result-fail {
+  background: #fff1f0;
+  color: #f5222d;
+  border: 1px solid #ffa39e;
+}
+
+.search-results {
+  margin-top: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.search-result-item {
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.2s;
+}
+
+.search-result-item:hover {
+  background: #f0f0f0;
+}
+
+.search-level {
+  color: #999;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.search-empty {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #999;
+  text-align: center;
+  padding: 8px;
+}
+
+.dialog-tip {
+  font-size: 12px;
+  color: #888;
+  margin: 0 0 8px;
+}
+
+.dialog-field {
+  margin-bottom: 8px;
+}
+</style>

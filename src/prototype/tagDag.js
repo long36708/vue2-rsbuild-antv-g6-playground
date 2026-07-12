@@ -378,3 +378,69 @@ export function createSampleDag() {
 
   return dag
 }
+
+/**
+ * 创建大规模样本 DAG（约 1000 个节点）
+ * 结构：多棵宽树 + 部分跨树多父节点边，保持无环且不超过 MAX_LEVEL 级
+ * @param {number} targetNodes 目标节点数
+ */
+export function createLargeSampleDag(targetNodes = 1000) {
+  const dag = createTagDag()
+  const maxLevel = MAX_LEVEL
+
+  // 根节点数量：用多棵并行子树来填充节点
+  const rootCount = 10
+  const roots = []
+  for (let i = 0; i < rootCount; i++) {
+    const id = `root-${i}`
+    addNode(dag, id, `根${i}`)
+    roots.push(id)
+  }
+
+  let nodeCounter = rootCount
+  const allIds = [...roots]
+
+  // BFS 逐层扩展，直到达到目标节点数或最大层级
+  let currentLevelIds = [...roots]
+  let level = 1
+
+  while (nodeCounter < targetNodes && level < maxLevel) {
+    const nextLevelIds = []
+    // 每个当前层节点生成若干子节点
+    const childrenPerNode = Math.max(1, Math.ceil((targetNodes - nodeCounter) / currentLevelIds.length))
+    for (const parentId of currentLevelIds) {
+      if (nodeCounter >= targetNodes) break
+      const actualChildren = Math.min(childrenPerNode, targetNodes - nodeCounter)
+      for (let c = 0; c < actualChildren; c++) {
+        const childId = `n-${nodeCounter}`
+        const childLabel = `节点${nodeCounter}`
+        addNode(dag, childId, childLabel)
+        addEdge(dag, parentId, childId)
+        allIds.push(childId)
+        nextLevelIds.push(childId)
+        nodeCounter++
+      }
+    }
+    currentLevelIds = nextLevelIds
+    level++
+  }
+
+  // 添加一些跨树多父节点边（不形成环、不超层级）
+  // 选取同层或相邻层的节点建立额外父子关系
+  const crossEdgeCount = Math.min(200, Math.floor(targetNodes * 0.2))
+  let addedCross = 0
+  for (let i = 0; i < crossEdgeCount && addedCross < crossEdgeCount; i++) {
+    // 随机选一个非根节点作为 target
+    const targetIdx = rootCount + Math.floor(Math.random() * (allIds.length - rootCount))
+    const targetId = allIds[targetIdx]
+    // 随机选一个不同子树的根路径上的节点作为 source
+    const sourceIdx = Math.floor(Math.random() * allIds.length)
+    const sourceId = allIds[sourceIdx]
+    if (sourceId === targetId) continue
+    // 尝试添加，失败则跳过
+    const result = addEdge(dag, sourceId, targetId)
+    if (result.ok) addedCross++
+  }
+
+  return dag
+}
